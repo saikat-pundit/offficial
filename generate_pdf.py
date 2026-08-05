@@ -284,14 +284,14 @@ def image_to_pdf(image_content, output_filename):
         if img.mode != 'RGB':
             img = img.convert('RGB')
         
-        # Create PDF
+        # Create PDF with generous margins
         doc = SimpleDocTemplate(
             output_filename,
             pagesize=portrait(A4),
-            rightMargin=10*mm,
-            leftMargin=10*mm,
-            topMargin=10*mm,
-            bottomMargin=10*mm
+            rightMargin=15*mm,
+            leftMargin=15*mm,
+            topMargin=15*mm,
+            bottomMargin=15*mm
         )
         
         story = []
@@ -299,27 +299,43 @@ def image_to_pdf(image_content, output_filename):
         # Get image dimensions
         img_width, img_height = img.size
         
-        # Calculate available space
+        # Calculate available space (accounting for margins)
         page_width, page_height = portrait(A4)
-        available_width = page_width - 20*mm
-        available_height = page_height - 20*mm
+        available_width = page_width - 30*mm  # 15mm each side
+        available_height = page_height - 30*mm  # 15mm top and bottom
         
-        # Calculate scaling
+        # Calculate scaling to fit within available space
         width_scale = available_width / img_width
         height_scale = available_height / img_height
+        
+        # Use the smaller scale to fit entirely
         scale = min(width_scale, height_scale)
+        
+        # Reduce scale by 2% to ensure it fits
+        scale = scale * 0.98
+        
+        # Calculate final dimensions
+        final_width = img_width * scale
+        final_height = img_height * scale
+        
+        print(f"  Available: {available_width:.2f}x{available_height:.2f}")
+        print(f"  Image: {img_width}x{img_height}, Scale: {scale:.2f}")
+        print(f"  Final: {final_width:.2f}x{final_height:.2f}")
         
         # Create a temporary file for the image
         temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
         img.save(temp_img.name, 'JPEG', quality=95)
         temp_img.close()
         
-        # Add image to PDF
-        reportlab_img = Image(temp_img.name, width=img_width*scale, height=img_height*scale)
+        # Add image to PDF with explicit dimensions
+        reportlab_img = Image(temp_img.name, width=final_width, height=final_height)
         reportlab_img.hAlign = 'CENTER'
+        reportlab_img.vAlign = 'MIDDLE'
         
-        story.append(Spacer(1, 10*mm))
+        # Add spacing to center vertically
+        story.append(Spacer(1, 5*mm))
         story.append(reportlab_img)
+        story.append(Spacer(1, 5*mm))
         
         doc.build(story)
         
