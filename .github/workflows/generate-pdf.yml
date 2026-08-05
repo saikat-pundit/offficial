@@ -16,6 +16,9 @@ jobs:
   generate-and-upload-pdf:
     runs-on: ubuntu-latest
     
+    permissions:
+      contents: write
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -35,6 +38,16 @@ jobs:
     - name: Generate PDF
       run: |
         python generate_pdf.py
+    
+    - name: Verify PDF exists
+      run: |
+        if [ -f "Transfer Application.pdf" ]; then
+          echo "PDF file size: $(du -h Transfer Application.pdf | cut -f1)"
+          echo "PDF exists, proceeding with upload"
+        else
+          echo "PDF file not found!"
+          exit 1
+        fi
     
     - name: Create Release if not exists
       id: create_release
@@ -61,7 +74,7 @@ jobs:
       if: env.RELEASE_EXISTS == 'true'
       run: |
         RELEASE_TAG="application"
-        echo "Deleting existing PDF from release ${RELEASE_TAG}"
+        echo "Checking for existing PDF in release ${RELEASE_TAG}"
         
         # Get asset ID if exists
         ASSET_ID=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf") | .id')
@@ -91,7 +104,15 @@ jobs:
       run: |
         RELEASE_TAG="application"
         echo "Verifying upload..."
-        gh release view ${RELEASE_TAG} --json assets
-        echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
+        echo "Release assets:"
+        gh release view ${RELEASE_TAG} --json assets -q '.assets[] | {name: .name, size: .size}'
+        
+        # Check if PDF is in release
+        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf")' | grep -q "Transfer Application.pdf"; then
+          echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
+        else
+          echo "❌ PDF not found in release"
+          exit 1
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
