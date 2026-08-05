@@ -275,51 +275,44 @@ def create_table_pdf(data_rows, output_filename):
     print(f"Table PDF created: {output_filename}")
 
 def image_to_pdf(image_content, output_filename):
-    """Convert any image (PNG, JPEG, etc.) to PDF"""
+    """Convert any image (PNG, JPEG, etc.) to PDF - strictly one page"""
     try:
-        # Open image from bytes (supports PNG, JPEG, GIF, BMP, WebP, etc.)
+        # Open image from bytes
         img = PILImage.open(io.BytesIO(image_content))
         
         # Convert to RGB if necessary
         if img.mode != 'RGB':
             img = img.convert('RGB')
         
-        # Create PDF with generous margins
-        doc = SimpleDocTemplate(
-            output_filename,
-            pagesize=portrait(A4),
-            rightMargin=15*mm,
-            leftMargin=15*mm,
-            topMargin=15*mm,
-            bottomMargin=15*mm
-        )
-        
-        story = []
-        
         # Get image dimensions
         img_width, img_height = img.size
         
-        # Calculate available space (accounting for margins)
+        # Create PDF with proper margins
         page_width, page_height = portrait(A4)
-        available_width = page_width - 30*mm  # 15mm each side
-        available_height = page_height - 30*mm  # 15mm top and bottom
+        
+        # Calculate available space with generous margins
+        margin = 20  # mm
+        available_width = page_width - (margin * 2) * mm
+        available_height = page_height - (margin * 2) * mm
         
         # Calculate scaling to fit within available space
         width_scale = available_width / img_width
         height_scale = available_height / img_height
         
-        # Use the smaller scale to fit entirely
+        # Use the smaller scale to ensure it fits
         scale = min(width_scale, height_scale)
         
-        # Reduce scale by 2% to ensure it fits
-        scale = scale * 0.98
+        # Apply a safety margin (95% of calculated scale)
+        scale = scale * 0.95
         
         # Calculate final dimensions
         final_width = img_width * scale
         final_height = img_height * scale
         
+        print(f"  Page: {page_width:.2f}x{page_height:.2f}")
         print(f"  Available: {available_width:.2f}x{available_height:.2f}")
-        print(f"  Image: {img_width}x{img_height}, Scale: {scale:.2f}")
+        print(f"  Image: {img_width}x{img_height}")
+        print(f"  Scale: {scale:.2f}")
         print(f"  Final: {final_width:.2f}x{final_height:.2f}")
         
         # Create a temporary file for the image
@@ -327,15 +320,27 @@ def image_to_pdf(image_content, output_filename):
         img.save(temp_img.name, 'JPEG', quality=95)
         temp_img.close()
         
-        # Add image to PDF with explicit dimensions
+        # Create PDF with exact dimensions
+        doc = SimpleDocTemplate(
+            output_filename,
+            pagesize=portrait(A4),
+            rightMargin=20*mm,
+            leftMargin=20*mm,
+            topMargin=20*mm,
+            bottomMargin=20*mm
+        )
+        
+        story = []
+        
+        # Add image with calculated dimensions
         reportlab_img = Image(temp_img.name, width=final_width, height=final_height)
         reportlab_img.hAlign = 'CENTER'
         reportlab_img.vAlign = 'MIDDLE'
         
-        # Add spacing to center vertically
-        story.append(Spacer(1, 5*mm))
+        # Center the image vertically with spacers
+        story.append(Spacer(1, 10*mm))
         story.append(reportlab_img)
-        story.append(Spacer(1, 5*mm))
+        story.append(Spacer(1, 10*mm))
         
         doc.build(story)
         
