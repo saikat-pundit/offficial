@@ -254,7 +254,7 @@ def create_table_pdf(data_rows, output_filename):
     print(f"Table PDF created: {output_filename}")
 
 def convert_image_to_single_page_pdf(image_content, output_filename):
-    """Convert image to single page PDF - STRICTLY ONE PAGE"""
+    """Convert image to single page PDF - FORCES FIT ON ONE PAGE"""
     try:
         # Open image
         img = PILImage.open(io.BytesIO(image_content))
@@ -269,7 +269,7 @@ def convert_image_to_single_page_pdf(image_content, output_filename):
         # Get page dimensions (Portrait A4)
         page_width, page_height = portrait(A4)
         
-        # Calculate maximum available space with margins
+        # Use very generous margins to ensure fit
         margin_mm = 15
         max_width = page_width - (2 * margin_mm * mm)
         max_height = page_height - (2 * margin_mm * mm)
@@ -284,6 +284,9 @@ def convert_image_to_single_page_pdf(image_content, output_filename):
         # If image is smaller than page, don't upscale
         if scale > 1.0:
             scale = 1.0
+        
+        # REDUCE SCALE FURTHER to ensure it definitely fits (85% of calculated)
+        scale = scale * 0.85
         
         # Calculate final dimensions
         final_width = img_width * scale
@@ -300,7 +303,7 @@ def convert_image_to_single_page_pdf(image_content, output_filename):
         img.save(temp_img.name, 'JPEG', quality=95)
         temp_img.close()
         
-        # Create PDF
+        # Create PDF with generous margins
         doc = SimpleDocTemplate(
             output_filename,
             pagesize=portrait(A4),
@@ -316,7 +319,10 @@ def convert_image_to_single_page_pdf(image_content, output_filename):
         reportlab_img = Image(temp_img.name, width=final_width, height=final_height)
         reportlab_img.hAlign = 'CENTER'
         
+        # Center vertically with spacers
+        story.append(Spacer(1, 10*mm))
         story.append(reportlab_img)
+        story.append(Spacer(1, 10*mm))
         
         doc.build(story)
         
@@ -324,7 +330,7 @@ def convert_image_to_single_page_pdf(image_content, output_filename):
         if os.path.exists(temp_img.name):
             os.unlink(temp_img.name)
         
-        print(f"Image converted to single page PDF: {output_filename}")
+        print(f"✅ Image converted to single page PDF: {output_filename}")
         return True
         
     except Exception as e:
@@ -362,12 +368,12 @@ def convert_pdf_to_single_page(pdf_content, output_filename):
         print(f"Error processing PDF: {e}")
         return False
 
-def get_image_from_pdf_page(pdf_content, output_filename):
-    """Extract first page as image and convert to single page PDF"""
+def convert_pdf_to_image_page(pdf_content, output_filename):
+    """Convert PDF first page to image and then to single page PDF"""
     try:
-        # Try to extract as image from PDF
+        # Try to extract as image from PDF using pdf2image
         from pdf2image import convert_from_bytes
-        images = convert_from_bytes(pdf_content, first_page=1, last_page=1)
+        images = convert_from_bytes(pdf_content, first_page=1, last_page=1, dpi=150)
         
         if images:
             # Convert first page to RGB
@@ -380,8 +386,17 @@ def get_image_from_pdf_page(pdf_content, output_filename):
             img.save(temp_img.name, 'JPEG', quality=95)
             temp_img.close()
             
-            # Convert image to PDF
-            return convert_image_to_single_page_pdf(open(temp_img.name, 'rb').read(), output_filename)
+            # Convert image to PDF with aggressive sizing
+            with open(temp_img.name, 'rb') as f:
+                image_content = f.read()
+            
+            success = convert_image_to_single_page_pdf(image_content, output_filename)
+            
+            # Clean up
+            if os.path.exists(temp_img.name):
+                os.unlink(temp_img.name)
+            
+            return success
         
         return False
     except Exception as e:
@@ -429,15 +444,17 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         
         if file_type == 'pdf':
             # Try to convert PDF to single page
+            print("Attempting to convert PDF to single page...")
             success = convert_pdf_to_single_page(content, pdf_file.name)
             
             # If that fails, try to extract as image
             if not success:
                 print("Attempting to extract PDF as image...")
-                success = get_image_from_pdf_page(content, pdf_file.name)
+                success = convert_pdf_to_image_page(content, pdf_file.name)
         
         else:
-            # Convert image to single page PDF
+            # Convert image to single page PDF with forced fit
+            print("Converting image to single page PDF...")
             success = convert_image_to_single_page_pdf(content, pdf_file.name)
         
         if success:
