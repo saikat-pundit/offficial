@@ -2,13 +2,12 @@ import csv
 import requests
 from io import StringIO, BytesIO
 from reportlab.lib.pagesizes import landscape, A4, portrait
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.pdfgen import canvas
-from PyPDF2 import PdfMerger, PdfReader
+from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import os
 import tempfile
 import re
@@ -63,29 +62,24 @@ def download_file_from_url(url):
         response = session.get(download_url, stream=True, timeout=30)
         response.raise_for_status()
         
-        # Check if it's a PDF or image
         content_type = response.headers.get('content-type', '').lower()
         
-        # If it's HTML, try the view URL
         if 'text/html' in content_type and file_id:
             view_url = f"https://drive.google.com/uc?export=view&id={file_id}"
             response = session.get(view_url, stream=True, timeout=30)
             response.raise_for_status()
-            content_type = response.headers.get('content-type', '').lower()
         
-        return response.content, content_type
+        return response.content
         
     except Exception as e:
         print(f"Error downloading file from {url}: {e}")
-        return None, None
+        return None
 
 def detect_file_type(content):
-    """Detect if content is PDF or image (supports PNG, JPEG, GIF, BMP, etc.)"""
-    # Check for PDF magic number
+    """Detect if content is PDF or image"""
     if content and content[:4] == b'%PDF':
         return 'pdf'
     
-    # Try to open as image (supports PNG, JPEG, GIF, BMP, WebP, etc.)
     try:
         PILImage.open(io.BytesIO(content))
         return 'image'
@@ -121,14 +115,12 @@ def wrap_text(text, max_length=20):
 def create_table_pdf(data_rows, output_filename):
     """Create PDF with table only (Page 1)"""
     
-    # Column mapping
     cols = {
         'teacher': 1, 'school': 0, 'enroll': 2, 'total': 3, 'ht': 4,
         'p1': 5, 'e1': 6, 't1': 7, 'p2': 8, 'e2': 9, 't2': 10,
         'p3': 11, 'e3': 12, 't3': 13
     }
     
-    # Prepare table data
     headers = [
         'Teacher Name -\nSchool Name',
         'Enrollment',
@@ -144,23 +136,18 @@ def create_table_pdf(data_rows, output_filename):
         if len(row) < 15:
             continue
             
-        # Build table row with wrapped text
         table_row = []
         
-        # Teacher Name - School Name
         teacher = row[cols['teacher']].strip() if cols['teacher'] < len(row) else ''
         school = row[cols['school']].strip() if cols['school'] < len(row) else ''
         table_row.append(wrap_text(f"{teacher} - {school}", 25))
         
-        # Enrollment
         table_row.append(row[cols['enroll']].strip() if cols['enroll'] < len(row) else '')
         
-        # Total Teacher - HT
         total = row[cols['total']].strip() if cols['total'] < len(row) else ''
         ht = row[cols['ht']].strip() if cols['ht'] < len(row) else ''
         table_row.append(wrap_text(f"{total} - {ht}", 15))
         
-        # Preferences
         p1 = row[cols['p1']].strip() if cols['p1'] < len(row) else ''
         e1 = row[cols['e1']].strip() if cols['e1'] < len(row) else ''
         t1 = row[cols['t1']].strip() if cols['t1'] < len(row) else ''
@@ -178,7 +165,6 @@ def create_table_pdf(data_rows, output_filename):
         
         table_data.append(table_row)
     
-    # Create PDF
     doc = SimpleDocTemplate(
         output_filename,
         pagesize=landscape(A4),
@@ -210,20 +196,13 @@ def create_table_pdf(data_rows, output_filename):
     
     story = []
     
-    # Add title and subtitle
     story.append(Paragraph("Rationalization of Teachers | Intra-circle Transfer", title_style))
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
     story.append(Spacer(1, 3*mm))
     
-    # Create table
     if table_data:
         col_widths = [
-            85*mm,  # Teacher Name - School Name
-            22*mm,  # Enrollment
-            30*mm,  # Total Teacher - HT
-            40*mm,  # Preference 1
-            40*mm,  # Preference 2
-            40*mm   # Preference 3
+            85*mm, 22*mm, 30*mm, 40*mm, 40*mm, 40*mm
         ]
         
         table_content = []
@@ -274,159 +253,229 @@ def create_table_pdf(data_rows, output_filename):
     doc.build(story)
     print(f"Table PDF created: {output_filename}")
 
-def image_to_pdf(image_content, output_filename):
-    """Convert any image (PNG, JPEG, etc.) to PDF - strictly one page"""
+def convert_image_to_single_page_pdf(image_content, output_filename):
+    """Convert image to single page PDF - STRICTLY ONE PAGE"""
     try:
-        # Open image from bytes
+        # Open image
         img = PILImage.open(io.BytesIO(image_content))
         
-        # Convert to RGB if necessary
+        # Convert to RGB
         if img.mode != 'RGB':
             img = img.convert('RGB')
         
-        # Get image dimensions
+        # Get original dimensions
         img_width, img_height = img.size
         
-        # Create PDF with proper margins
+        # Get page dimensions (Portrait A4)
         page_width, page_height = portrait(A4)
         
-        # Calculate available space with generous margins
-        margin = 20  # mm
-        available_width = page_width - (margin * 2) * mm
-        available_height = page_height - (margin * 2) * mm
+        # Calculate maximum available space with margins
+        margin_mm = 15
+        max_width = page_width - (2 * margin_mm * mm)
+        max_height = page_height - (2 * margin_mm * mm)
         
-        # Calculate scaling to fit within available space
-        width_scale = available_width / img_width
-        height_scale = available_height / img_height
+        # Calculate scale to fit image within page
+        scale_x = max_width / img_width
+        scale_y = max_height / img_height
         
-        # Use the smaller scale to ensure it fits
-        scale = min(width_scale, height_scale)
+        # Use the smaller scale to ensure it fits completely
+        scale = min(scale_x, scale_y)
         
-        # Apply a safety margin (95% of calculated scale)
-        scale = scale * 0.95
+        # If image is smaller than page, don't upscale
+        if scale > 1.0:
+            scale = 1.0
         
         # Calculate final dimensions
         final_width = img_width * scale
         final_height = img_height * scale
         
-        print(f"  Page: {page_width:.2f}x{page_height:.2f}")
-        print(f"  Available: {available_width:.2f}x{available_height:.2f}")
         print(f"  Image: {img_width}x{img_height}")
-        print(f"  Scale: {scale:.2f}")
+        print(f"  Page: {page_width:.2f}x{page_height:.2f}")
+        print(f"  Max available: {max_width:.2f}x{max_height:.2f}")
+        print(f"  Scale: {scale:.4f}")
         print(f"  Final: {final_width:.2f}x{final_height:.2f}")
         
-        # Create a temporary file for the image
+        # Save image to temp file
         temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
         img.save(temp_img.name, 'JPEG', quality=95)
         temp_img.close()
         
-        # Create PDF with exact dimensions
+        # Create PDF
         doc = SimpleDocTemplate(
             output_filename,
             pagesize=portrait(A4),
-            rightMargin=20*mm,
-            leftMargin=20*mm,
-            topMargin=20*mm,
-            bottomMargin=20*mm
+            rightMargin=margin_mm*mm,
+            leftMargin=margin_mm*mm,
+            topMargin=margin_mm*mm,
+            bottomMargin=margin_mm*mm
         )
         
         story = []
         
-        # Add image with calculated dimensions
+        # Add image with exact dimensions
         reportlab_img = Image(temp_img.name, width=final_width, height=final_height)
         reportlab_img.hAlign = 'CENTER'
-        reportlab_img.vAlign = 'MIDDLE'
         
-        # Center the image vertically with spacers
-        story.append(Spacer(1, 10*mm))
         story.append(reportlab_img)
-        story.append(Spacer(1, 10*mm))
         
         doc.build(story)
         
-        # Clean up temp file
+        # Clean up
         if os.path.exists(temp_img.name):
             os.unlink(temp_img.name)
-            
-        print(f"Image converted to PDF: {output_filename}")
+        
+        print(f"Image converted to single page PDF: {output_filename}")
         return True
         
     except Exception as e:
         print(f"Error converting image to PDF: {e}")
         return False
 
+def convert_pdf_to_single_page(pdf_content, output_filename):
+    """Convert multi-page PDF to single page by extracting first page"""
+    try:
+        pdf_reader = PdfReader(io.BytesIO(pdf_content))
+        
+        if len(pdf_reader.pages) == 0:
+            print("PDF has no pages")
+            return False
+        
+        # If single page, just save it
+        if len(pdf_reader.pages) == 1:
+            with open(output_filename, 'wb') as f:
+                f.write(pdf_content)
+            print(f"Single page PDF saved directly")
+            return True
+        
+        # Extract first page only
+        print(f"PDF has {len(pdf_reader.pages)} pages, extracting first page only")
+        pdf_writer = PdfWriter()
+        pdf_writer.add_page(pdf_reader.pages[0])
+        
+        with open(output_filename, 'wb') as f:
+            pdf_writer.write(f)
+        
+        print(f"First page extracted to: {output_filename}")
+        return True
+        
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
+        return False
+
+def get_image_from_pdf_page(pdf_content, output_filename):
+    """Extract first page as image and convert to single page PDF"""
+    try:
+        # Try to extract as image from PDF
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(pdf_content, first_page=1, last_page=1)
+        
+        if images:
+            # Convert first page to RGB
+            img = images[0]
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Save as temporary image
+            temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+            img.save(temp_img.name, 'JPEG', quality=95)
+            temp_img.close()
+            
+            # Convert image to PDF
+            return convert_image_to_single_page_pdf(open(temp_img.name, 'rb').read(), output_filename)
+        
+        return False
+    except Exception as e:
+        print(f"Error extracting image from PDF: {e}")
+        return False
+
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
-    """Create PDF with table and images"""
+    """Create PDF with table and images - ONE IMAGE PER PAGE"""
     
     # Step 1: Create table PDF (Page 1)
     table_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
     table_pdf.close()
     create_table_pdf(data_rows, table_pdf.name)
     
-    # Step 2: Download and convert images to PDF
+    # Step 2: Download and convert each file to single page PDF
     image_pdfs = []
     
     for idx, row in enumerate(data_rows):
         if len(row) < 15:
             continue
             
-        # Extract image URL from column 14
         image_url = row[14].strip() if len(row) > 14 and row[14].strip() else None
         if not image_url:
             continue
             
-        print(f"\nProcessing image {idx + 1}: {image_url}")
+        print(f"\n{'='*50}")
+        print(f"Processing entry {idx + 1}")
+        print(f"{'='*50}")
         
         # Download file
-        content, content_type = download_file_from_url(image_url)
+        content = download_file_from_url(image_url)
         if not content:
-            print(f"Failed to download file {idx + 1}")
+            print(f"Failed to download file")
             continue
         
         # Detect file type
         file_type = detect_file_type(content)
-        print(f"File type detected: {file_type}")
+        print(f"File type: {file_type}")
         
-        # Handle any file type (PNG, JPEG, PDF, etc.)
+        # Create temp PDF file
+        pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        pdf_file.close()
+        
+        success = False
+        
         if file_type == 'pdf':
-            # Save PDF directly
-            pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-            pdf_file.write(content)
-            pdf_file.close()
-            image_pdfs.append(pdf_file.name)
-            print(f"PDF saved directly: {pdf_file.name}")
+            # Try to convert PDF to single page
+            success = convert_pdf_to_single_page(content, pdf_file.name)
             
+            # If that fails, try to extract as image
+            if not success:
+                print("Attempting to extract PDF as image...")
+                success = get_image_from_pdf_page(content, pdf_file.name)
+        
         else:
-            # Convert any image (PNG, JPEG, etc.) to PDF
-            pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-            pdf_file.close()
-            if image_to_pdf(content, pdf_file.name):
-                image_pdfs.append(pdf_file.name)
-                print(f"Image converted to PDF: {pdf_file.name}")
-            else:
-                print(f"Failed to convert file {idx + 1}")
+            # Convert image to single page PDF
+            success = convert_image_to_single_page_pdf(content, pdf_file.name)
+        
+        if success:
+            image_pdfs.append(pdf_file.name)
+            print(f"✅ Successfully converted to single page PDF")
+        else:
+            print(f"❌ Failed to convert file")
+            if os.path.exists(pdf_file.name):
+                os.unlink(pdf_file.name)
     
     # Step 3: Merge all PDFs
     if image_pdfs:
+        print(f"\n{'='*50}")
+        print(f"Merging {len(image_pdfs)} image pages with table")
+        print(f"{'='*50}")
+        
         merger = PdfMerger()
         
         # Add table PDF
         merger.append(table_pdf.name)
+        print(f"Added: Table page")
         
         # Add image PDFs
-        for pdf_file in image_pdfs:
+        for i, pdf_file in enumerate(image_pdfs, 1):
             try:
                 merger.append(pdf_file)
-                print(f"Added: {pdf_file}")
+                print(f"Added: Image {i}")
             except Exception as e:
-                print(f"Error adding {pdf_file}: {e}")
+                print(f"Error adding image {i}: {e}")
         
         # Save merged PDF
         merger.write(output_filename)
         merger.close()
         
-        print(f"\n✅ PDF created successfully: {output_filename}")
-        print(f"Total pages: {1 + len(image_pdfs)} (1 table page + {len(image_pdfs)} image pages)")
+        print(f"\n{'='*50}")
+        print(f"✅ PDF created successfully: {output_filename}")
+        print(f"Total pages: {1 + len(image_pdfs)} (1 table + {len(image_pdfs)} images)")
+        print(f"{'='*50}")
         
     else:
         # Just copy table PDF
