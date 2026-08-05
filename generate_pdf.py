@@ -2,7 +2,7 @@ import csv
 import requests
 from io import StringIO
 from reportlab.lib.pagesizes import landscape, A4, portrait
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, Frame, PageTemplate, BaseDocTemplate
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
@@ -117,11 +117,13 @@ def wrap_text(text, max_length=20):
     
     return '\n'.join(lines)
 
-class MyDocTemplate(BaseDocTemplate):
-    def __init__(self, filename, **kw):
-        BaseDocTemplate.__init__(self, filename, **kw)
-        # Create frames for different page sizes
-        self._first_page = True
+def first_page(canvas, doc):
+    """First page - Landscape"""
+    canvas.setPageSize(landscape(A4))
+
+def later_pages(canvas, doc):
+    """Later pages - Portrait"""
+    canvas.setPageSize(portrait(A4))
 
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     """Create PDF with table and images"""
@@ -375,7 +377,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     # Build PDF
     try:
         # Build the PDF with the first page in landscape and rest in portrait
-        doc.build(story, onFirstPage=self._firstPage, onLaterPages=self._laterPages)
+        doc.build(story, onFirstPage=first_page, onLaterPages=later_pages)
         print(f"PDF created successfully: {output_filename}")
     except Exception as e:
         print(f"Error building PDF: {e}")
@@ -390,14 +392,6 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                     print(f"Deleted: {temp_file_path}")
                 except Exception as e:
                     print(f"Error deleting {temp_file_path}: {e}")
-
-def _firstPage(self, canvas, doc):
-    """First page - Landscape"""
-    canvas.setPageSize(landscape(A4))
-
-def _laterPages(self, canvas, doc):
-    """Later pages - Portrait"""
-    canvas.setPageSize(portrait(A4))
 
 def main():
     csv_url = "https://gist.githubusercontent.com/saikat-pundit/ad6a030b5bf7d6ecaa1eaa3176526d82/raw/Rationalisation.csv"
