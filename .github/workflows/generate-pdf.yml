@@ -93,9 +93,7 @@ jobs:
       run: |
         RELEASE_TAG="application"
         echo "Uploading PDF to release ${RELEASE_TAG}"
-        gh release upload ${RELEASE_TAG} "Transfer Application.pdf" \
-          --clobber \
-          --title "Transfer Application.pdf"
+        gh release upload ${RELEASE_TAG} "Transfer Application.pdf" --clobber
         echo "PDF uploaded successfully"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
