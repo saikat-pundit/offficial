@@ -2,7 +2,7 @@ import csv
 import requests
 from io import StringIO
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, KeepTogether
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
@@ -197,14 +197,14 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     
     print(f"Created {len(table_data)} table rows, {len([f for f in temp_files if f])} images downloaded")
     
-    # Create PDF
+    # Create PDF with minimal margins
     doc = SimpleDocTemplate(
         output_filename,
         pagesize=landscape(A4),
-        rightMargin=8*mm,
-        leftMargin=8*mm,
-        topMargin=10*mm,
-        bottomMargin=10*mm
+        rightMargin=5*mm,
+        leftMargin=5*mm,
+        topMargin=8*mm,
+        bottomMargin=8*mm
     )
     
     styles = getSampleStyleSheet()
@@ -227,15 +227,15 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         spaceAfter=8
     )
     
-    # Build story
+    # Build story - only add elements that have content
     story = []
     
     # Add title and subtitle
     story.append(Paragraph("Rationalization of Teachers | Intra-circle Transfer", title_style))
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
-    story.append(Spacer(1, 4*mm))
+    story.append(Spacer(1, 3*mm))
     
-    # Create table
+    # Create table if there's data
     if table_data:
         # Calculate column widths (proportional)
         col_widths = [
@@ -291,31 +291,26 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             
             # Padding
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
             
             # Alternating row colors
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
         ]))
         
         story.append(table)
-    else:
-        story.append(Paragraph("No data available", styles['Normal']))
     
-    # Add images on separate pages
-    image_count = 0
-    for idx, temp_file_path in enumerate(temp_files):
-        if temp_file_path and os.path.exists(temp_file_path):
-            image_count += 1
+    # Add images on separate pages - only if images exist
+    valid_images = [f for f in temp_files if f and os.path.exists(f)]
+    
+    if valid_images:
+        # Add a page break before first image if there's table data
+        if table_data:
             story.append(PageBreak())
-            
-            # Add image header
-            story.append(Paragraph(f"Application Image - Entry {idx + 1}", 
-                                 ParagraphStyle('ImageHeader', parent=styles['Heading2'], 
-                                              alignment=TA_CENTER, fontSize=12, spaceAfter=8)))
-            
+        
+        for idx, temp_file_path in enumerate(valid_images):
             try:
                 # Get image dimensions
                 pil_img = PILImage.open(temp_file_path)
@@ -325,30 +320,36 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                 # Add image to PDF directly from file path
                 img = Image(temp_file_path)
                 
-                # Calculate available space (leave room for header and caption)
+                # Calculate available space (minimal margins)
                 page_width = landscape(A4)[0]
                 page_height = landscape(A4)[1]
-                max_width = page_width - 20*mm
-                max_height = page_height - 35*mm
+                max_width = page_width - 12*mm  # Minimal margins
+                max_height = page_height - 20*mm  # Minimal margins for header
                 
                 # Calculate scaling to fit page while maintaining aspect ratio
                 width_scale = max_width / img_width
                 height_scale = max_height / img_height
-                scale = min(width_scale, height_scale, 1.0)  # Don't upscale
+                scale = min(width_scale, height_scale, 1.0)
                 
-                # Apply scaling (at least 60% of max size for better visibility)
-                if scale < 0.6:
-                    scale = 0.6
+                # Ensure image is at least 70% of available space
+                if scale < 0.7:
+                    scale = 0.7
                 
+                # Apply scaling
                 img.drawWidth = img_width * scale
                 img.drawHeight = img_height * scale
                 img.hAlign = 'CENTER'
                 
-                story.append(Spacer(1, 5*mm))
-                story.append(img)
-                story.append(Spacer(1, 5*mm))
+                # Add image header
+                story.append(Paragraph(f"Application Image - Entry {idx + 1}", 
+                                     ParagraphStyle('ImageHeader', parent=styles['Heading2'], 
+                                                  alignment=TA_CENTER, fontSize=11, spaceAfter=5)))
                 
-                # Add image caption
+                story.append(Spacer(1, 2*mm))
+                story.append(img)
+                
+                # Add caption at bottom
+                story.append(Spacer(1, 3*mm))
                 caption_style = ParagraphStyle(
                     'ImageCaption',
                     parent=styles['Normal'],
@@ -356,11 +357,14 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                     fontSize=8,
                     textColor=colors.grey
                 )
-                story.append(Paragraph(f"Image {image_count} of {len([f for f in temp_files if f])}", caption_style))
+                story.append(Paragraph(f"Image {idx + 1} of {len(valid_images)}", caption_style))
                 
+                # Add page break after each image except the last one
+                if idx < len(valid_images) - 1:
+                    story.append(PageBreak())
+                    
             except Exception as e:
                 print(f"Error adding image {idx + 1}: {e}")
-                story.append(Paragraph(f"Error loading image: {str(e)}", styles['Normal']))
     
     # Build PDF
     try:
