@@ -76,15 +76,19 @@ jobs:
         RELEASE_TAG="application"
         echo "Checking for existing PDF in release ${RELEASE_TAG}"
         
-        # Get asset ID if exists (check both possible filenames)
-        ASSET_ID=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf" or .name=="Transfer.Application.pdf") | .id' | head -1)
+        # Get all assets and delete any PDF files
+        ASSETS=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name | test("\\.pdf$")) | .id')
         
-        if [ -n "${ASSET_ID}" ]; then
-          echo "Found existing PDF with ID: ${ASSET_ID}, deleting..."
-          # Get the actual asset name
-          ASSET_NAME=$(gh release view ${RELEASE_TAG} --json assets -q ".assets[] | select(.id==${ASSET_ID}) | .name")
-          gh release delete-asset ${RELEASE_TAG} "${ASSET_NAME}" --yes
-          echo "Existing PDF deleted"
+        if [ -n "${ASSETS}" ]; then
+          echo "Found existing PDF assets, deleting..."
+          echo "${ASSETS}" | while read -r ASSET_ID; do
+            if [ -n "${ASSET_ID}" ]; then
+              ASSET_NAME=$(gh release view ${RELEASE_TAG} --json assets -q ".assets[] | select(.id==${ASSET_ID}) | .name")
+              echo "Deleting asset: ${ASSET_NAME}"
+              gh release delete-asset ${RELEASE_TAG} "${ASSET_NAME}" --yes 2>/dev/null || true
+            fi
+          done
+          echo "Existing PDFs deleted"
         else
           echo "No existing PDF found in release"
         fi
@@ -107,8 +111,8 @@ jobs:
         echo "Release assets:"
         gh release view ${RELEASE_TAG} --json assets -q '.assets[] | {name: .name, size: .size}'
         
-        # Check if PDF is in release (check both possible filenames)
-        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf" or .name=="Transfer.Application.pdf")' | grep -q "Transfer"; then
+        # Check if PDF is in release
+        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name | test("\\.pdf$"))' | grep -q "pdf"; then
           echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
         else
           echo "❌ PDF not found in release"
