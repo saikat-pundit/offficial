@@ -1,4 +1,4 @@
-name: Generate Transfer Application PDF
+name: Generate and Upload Transfer Application PDF
 
 on:
   workflow_dispatch:
@@ -13,12 +13,14 @@ on:
           - 'false'
 
 jobs:
-  generate-pdf:
+  generate-and-upload-pdf:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -29,33 +31,67 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install Pillow  # Additional image handling
-    
-    - name: Delete existing PDF if exists
-      run: |
-        if [ -f "Transfer Application.pdf" ]; then
-          rm "Transfer Application.pdf"
-          echo "Existing PDF deleted"
-        fi
     
     - name: Generate PDF
       run: |
         python generate_pdf.py
     
-    - name: Upload PDF to Official Tab
-      uses: actions/upload-artifact@v4
-      with:
-        name: Official-Tab
-        path: Transfer Application.pdf
-        retention-days: 90
-        if-no-files-found: error
-    
-    - name: Commit and push PDF to repository
+    - name: Create Release if not exists
+      id: create_release
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add "Transfer Application.pdf" || true
-        git diff --staged --quiet || git commit -m "Update Transfer Application.pdf [skip ci]"
-        git push || echo "No changes to push"
+        RELEASE_TAG="application"
+        echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+        
+        # Check if release exists
+        if gh release view ${RELEASE_TAG} 2>/dev/null; then
+          echo "Release ${RELEASE_TAG} exists"
+          echo "RELEASE_EXISTS=true" >> $GITHUB_ENV
+        else
+          echo "Creating release ${RELEASE_TAG}"
+          gh release create ${RELEASE_TAG} \
+            --title "Application PDF Releases" \
+            --notes "Automated PDF releases for Transfer Applications" \
+            --target ${{ github.sha }}
+          echo "RELEASE_EXISTS=false" >> $GITHUB_ENV
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Delete existing PDF from release
+      if: env.RELEASE_EXISTS == 'true'
+      run: |
+        RELEASE_TAG="application"
+        echo "Deleting existing PDF from release ${RELEASE_TAG}"
+        
+        # Get asset ID if exists
+        ASSET_ID=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf") | .id')
+        
+        if [ -n "${ASSET_ID}" ]; then
+          echo "Found existing PDF with ID: ${ASSET_ID}, deleting..."
+          gh release delete-asset ${RELEASE_TAG} Transfer Application.pdf --yes
+          echo "Existing PDF deleted"
+        else
+          echo "No existing PDF found in release"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Upload PDF to Release
+      run: |
+        RELEASE_TAG="application"
+        echo "Uploading PDF to release ${RELEASE_TAG}"
+        gh release upload ${RELEASE_TAG} "Transfer Application.pdf" \
+          --clobber \
+          --title "Transfer Application.pdf"
+        echo "PDF uploaded successfully"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Verify upload
+      run: |
+        RELEASE_TAG="application"
+        echo "Verifying upload..."
+        gh release view ${RELEASE_TAG} --json assets
+        echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
