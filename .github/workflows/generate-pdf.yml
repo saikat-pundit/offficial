@@ -1,6 +1,8 @@
 name: Generate and Upload Transfer Application PDF
 
 on:
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       force_generate:
