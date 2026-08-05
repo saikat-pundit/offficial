@@ -5,13 +5,12 @@ from reportlab.lib.pagesizes import landscape, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, mm
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.units import mm
+from reportlab.lib.enums import TA_CENTER
 import os
 import tempfile
 import re
 from PIL import Image as PILImage
-import io
 
 def download_csv_from_gist(url):
     """Download CSV data from gist URL"""
@@ -93,32 +92,8 @@ def download_image_to_temp(url):
                 pass
         return None
 
-def wrap_text(text, max_length=20):
-    """Wrap text to fit in table cells"""
-    if not text:
-        return ''
-    words = text.split()
-    lines = []
-    current_line = []
-    current_length = 0
-    
-    for word in words:
-        if current_length + len(word) + 1 <= max_length:
-            current_line.append(word)
-            current_length += len(word) + 1
-        else:
-            if current_line:
-                lines.append(' '.join(current_line))
-            current_line = [word]
-            current_length = len(word)
-    
-    if current_line:
-        lines.append(' '.join(current_line))
-    
-    return '\n'.join(lines)
-
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
-    """Create PDF with table and images"""
+    """Create PDF with table and images only - no extra content"""
     
     # Column mapping
     cols = {
@@ -161,13 +136,13 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         else:
             temp_files.append(None)
         
-        # Build table row with wrapped text
+        # Build table row
         table_row = []
         
         # Teacher Name - School Name
         teacher = row[cols['teacher']].strip() if cols['teacher'] < len(row) else ''
         school = row[cols['school']].strip() if cols['school'] < len(row) else ''
-        table_row.append(wrap_text(f"{teacher} - {school}", 25))
+        table_row.append(f"{teacher} - {school}")
         
         # Enrollment
         table_row.append(row[cols['enroll']].strip() if cols['enroll'] < len(row) else '')
@@ -175,23 +150,23 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         # Total Teacher - HT
         total = row[cols['total']].strip() if cols['total'] < len(row) else ''
         ht = row[cols['ht']].strip() if cols['ht'] < len(row) else ''
-        table_row.append(wrap_text(f"{total} - {ht}", 15))
+        table_row.append(f"{total} - {ht}")
         
         # Preferences
         p1 = row[cols['p1']].strip() if cols['p1'] < len(row) else ''
         e1 = row[cols['e1']].strip() if cols['e1'] < len(row) else ''
         t1 = row[cols['t1']].strip() if cols['t1'] < len(row) else ''
-        table_row.append(wrap_text(f"{p1} - {e1} - {t1}", 20))
+        table_row.append(f"{p1} - {e1} - {t1}")
         
         p2 = row[cols['p2']].strip() if cols['p2'] < len(row) else ''
         e2 = row[cols['e2']].strip() if cols['e2'] < len(row) else ''
         t2 = row[cols['t2']].strip() if cols['t2'] < len(row) else ''
-        table_row.append(wrap_text(f"{p2} - {e2} - {t2}", 20))
+        table_row.append(f"{p2} - {e2} - {t2}")
         
         p3 = row[cols['p3']].strip() if cols['p3'] < len(row) else ''
         e3 = row[cols['e3']].strip() if cols['e3'] < len(row) else ''
         t3 = row[cols['t3']].strip() if cols['t3'] < len(row) else ''
-        table_row.append(wrap_text(f"{p3} - {e3} - {t3}", 20))
+        table_row.append(f"{p3} - {e3} - {t3}")
         
         table_data.append(table_row)
     
@@ -227,17 +202,17 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         spaceAfter=8
     )
     
-    # Build story - only add elements that have content
+    # Build story - ONLY table and images, nothing else
     story = []
     
-    # Add title and subtitle
+    # Page 1: Title and Table
     story.append(Paragraph("Rationalization of Teachers | Intra-circle Transfer", title_style))
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
     story.append(Spacer(1, 3*mm))
     
     # Create table if there's data
     if table_data:
-        # Calculate column widths (proportional)
+        # Calculate column widths
         col_widths = [
             85*mm,  # Teacher Name - School Name
             22*mm,  # Enrollment
@@ -247,27 +222,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             40*mm   # Preference 3
         ]
         
-        # Convert table data to Paragraphs for better wrapping
-        table_content = []
-        for row in table_data:
-            para_row = []
-            for cell in row:
-                para_row.append(Paragraph(cell, styles['Normal']))
-            table_content.append(para_row)
-        
-        # Create header paragraphs
-        header_paras = []
-        for header in headers:
-            header_paras.append(Paragraph(header, ParagraphStyle(
-                'HeaderStyle',
-                parent=styles['Normal'],
-                alignment=TA_CENTER,
-                fontSize=8,
-                leading=10,
-                textColor=colors.white
-            )))
-        
-        table = Table([header_paras] + table_content, colWidths=col_widths, repeatRows=1)
+        table = Table([headers] + table_data, colWidths=col_widths, repeatRows=1)
         
         # Style the table
         table.setStyle(TableStyle([
@@ -302,21 +257,16 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         
         story.append(table)
     
-    # Add images on separate pages - only if images exist
+    # Add images - each on its own page starting from page 2
     valid_images = [f for f in temp_files if f and os.path.exists(f)]
     
     if valid_images:
-        # Add a page break before first image if there's table data
-        if table_data:
-            story.append(PageBreak())
-        
         # Get page dimensions
         page_width, page_height = landscape(A4)
         
         for idx, temp_file_path in enumerate(valid_images):
-            # Start each image on a new page
-            if idx > 0:
-                story.append(PageBreak())
+            # Add page break before each image (first image starts on page 2)
+            story.append(PageBreak())
             
             try:
                 # Get image dimensions using PIL
@@ -331,17 +281,13 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                 # Calculate scaling to fit within available space
                 width_scale = available_width / img_width
                 height_scale = available_height / img_height
-                scale = min(width_scale, height_scale)
-                
-                # Ensure image doesn't exceed page bounds
-                if scale > 1.0:
-                    scale = 1.0
+                scale = min(width_scale, height_scale, 1.0)
                 
                 # Calculate final dimensions
                 final_width = img_width * scale
                 final_height = img_height * scale
                 
-                print(f"Image {idx+1}: Original ({img_width}x{img_height}), Scaled ({final_width:.2f}x{final_height:.2f}), Scale: {scale:.2f}")
+                print(f"Image {idx+1}: Original ({img_width}x{img_height}), Scaled ({final_width:.2f}x{final_height:.2f})")
                 
                 # Create image with calculated dimensions
                 img = Image(temp_file_path, width=final_width, height=final_height)
@@ -374,6 +320,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     try:
         doc.build(story)
         print(f"PDF created successfully: {output_filename}")
+        print(f"Total pages: {len(valid_images) + 1} (1 table page + {len(valid_images)} image pages)")
     except Exception as e:
         print(f"Error building PDF: {e}")
         raise
