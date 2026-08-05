@@ -93,6 +93,30 @@ def download_image_to_temp(url):
                 pass
         return None
 
+def wrap_text(text, max_length=20):
+    """Wrap text to fit in table cells"""
+    if not text:
+        return ''
+    words = text.split()
+    lines = []
+    current_line = []
+    current_length = 0
+    
+    for word in words:
+        if current_length + len(word) + 1 <= max_length:
+            current_line.append(word)
+            current_length += len(word) + 1
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+            current_line = [word]
+            current_length = len(word)
+    
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    return '\n'.join(lines)
+
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     """Create PDF with table and images"""
     
@@ -137,13 +161,13 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         else:
             temp_files.append(None)
         
-        # Build table row
+        # Build table row with wrapped text
         table_row = []
         
         # Teacher Name - School Name
         teacher = row[cols['teacher']].strip() if cols['teacher'] < len(row) else ''
         school = row[cols['school']].strip() if cols['school'] < len(row) else ''
-        table_row.append(f"{teacher} - {school}")
+        table_row.append(wrap_text(f"{teacher} - {school}", 25))
         
         # Enrollment
         table_row.append(row[cols['enroll']].strip() if cols['enroll'] < len(row) else '')
@@ -151,23 +175,23 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         # Total Teacher - HT
         total = row[cols['total']].strip() if cols['total'] < len(row) else ''
         ht = row[cols['ht']].strip() if cols['ht'] < len(row) else ''
-        table_row.append(f"{total} - {ht}")
+        table_row.append(wrap_text(f"{total} - {ht}", 15))
         
         # Preferences
         p1 = row[cols['p1']].strip() if cols['p1'] < len(row) else ''
         e1 = row[cols['e1']].strip() if cols['e1'] < len(row) else ''
         t1 = row[cols['t1']].strip() if cols['t1'] < len(row) else ''
-        table_row.append(f"{p1} - {e1} - {t1}")
+        table_row.append(wrap_text(f"{p1} - {e1} - {t1}", 20))
         
         p2 = row[cols['p2']].strip() if cols['p2'] < len(row) else ''
         e2 = row[cols['e2']].strip() if cols['e2'] < len(row) else ''
         t2 = row[cols['t2']].strip() if cols['t2'] < len(row) else ''
-        table_row.append(f"{p2} - {e2} - {t2}")
+        table_row.append(wrap_text(f"{p2} - {e2} - {t2}", 20))
         
         p3 = row[cols['p3']].strip() if cols['p3'] < len(row) else ''
         e3 = row[cols['e3']].strip() if cols['e3'] < len(row) else ''
         t3 = row[cols['t3']].strip() if cols['t3'] < len(row) else ''
-        table_row.append(f"{p3} - {e3} - {t3}")
+        table_row.append(wrap_text(f"{p3} - {e3} - {t3}", 20))
         
         table_data.append(table_row)
     
@@ -177,8 +201,8 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     doc = SimpleDocTemplate(
         output_filename,
         pagesize=landscape(A4),
-        rightMargin=5*mm,
-        leftMargin=5*mm,
+        rightMargin=8*mm,
+        leftMargin=8*mm,
         topMargin=10*mm,
         bottomMargin=10*mm
     )
@@ -189,18 +213,18 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         'TitleStyle',
         parent=styles['Heading1'],
         alignment=TA_CENTER,
-        fontSize=16,
-        leading=20,
-        spaceAfter=6
+        fontSize=14,
+        leading=18,
+        spaceAfter=4
     )
     
     subtitle_style = ParagraphStyle(
         'SubtitleStyle',
         parent=styles['Heading2'],
         alignment=TA_CENTER,
-        fontSize=14,
-        leading=18,
-        spaceAfter=12
+        fontSize=12,
+        leading=16,
+        spaceAfter=8
     )
     
     # Build story
@@ -209,21 +233,41 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     # Add title and subtitle
     story.append(Paragraph("Rationalization of Teachers | Intra-circle Transfer", title_style))
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
-    story.append(Spacer(1, 6*mm))
+    story.append(Spacer(1, 4*mm))
     
     # Create table
     if table_data:
-        # Calculate column widths
+        # Calculate column widths (proportional)
         col_widths = [
-            90*mm,  # Teacher Name - School Name
-            25*mm,  # Enrollment
-            35*mm,  # Total Teacher - HT
-            45*mm,  # Preference 1
-            45*mm,  # Preference 2
-            45*mm   # Preference 3
+            85*mm,  # Teacher Name - School Name
+            22*mm,  # Enrollment
+            30*mm,  # Total Teacher - HT
+            40*mm,  # Preference 1
+            40*mm,  # Preference 2
+            40*mm   # Preference 3
         ]
         
-        table = Table([headers] + table_data, colWidths=col_widths, repeatRows=1)
+        # Convert table data to Paragraphs for better wrapping
+        table_content = []
+        for row in table_data:
+            para_row = []
+            for cell in row:
+                para_row.append(Paragraph(cell, styles['Normal']))
+            table_content.append(para_row)
+        
+        # Create header paragraphs
+        header_paras = []
+        for header in headers:
+            header_paras.append(Paragraph(header, ParagraphStyle(
+                'HeaderStyle',
+                parent=styles['Normal'],
+                alignment=TA_CENTER,
+                fontSize=8,
+                leading=10,
+                textColor=colors.white
+            )))
+        
+        table = Table([header_paras] + table_content, colWidths=col_widths, repeatRows=1)
         
         # Style the table
         table.setStyle(TableStyle([
@@ -247,10 +291,10 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
             
             # Padding
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('LEFTPADDING', (0, 0), (-1, -1), 3),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             
             # Alternating row colors
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
@@ -270,32 +314,37 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             # Add image header
             story.append(Paragraph(f"Application Image - Entry {idx + 1}", 
                                  ParagraphStyle('ImageHeader', parent=styles['Heading2'], 
-                                              alignment=TA_CENTER, fontSize=12, spaceAfter=10)))
+                                              alignment=TA_CENTER, fontSize=12, spaceAfter=8)))
             
             try:
+                # Get image dimensions
+                pil_img = PILImage.open(temp_file_path)
+                img_width, img_height = pil_img.size
+                pil_img.close()
+                
                 # Add image to PDF directly from file path
                 img = Image(temp_file_path)
                 
-                # Calculate available space
+                # Calculate available space (leave room for header and caption)
                 page_width = landscape(A4)[0]
                 page_height = landscape(A4)[1]
                 max_width = page_width - 20*mm
-                max_height = page_height - 30*mm
-                
-                # Get original dimensions
-                img_width = img.drawWidth
-                img_height = img.drawHeight
+                max_height = page_height - 35*mm
                 
                 # Calculate scaling to fit page while maintaining aspect ratio
                 width_scale = max_width / img_width
                 height_scale = max_height / img_height
-                scale = min(width_scale, height_scale)
+                scale = min(width_scale, height_scale, 1.0)  # Don't upscale
                 
-                # Apply scaling
+                # Apply scaling (at least 60% of max size for better visibility)
+                if scale < 0.6:
+                    scale = 0.6
+                
                 img.drawWidth = img_width * scale
                 img.drawHeight = img_height * scale
                 img.hAlign = 'CENTER'
                 
+                story.append(Spacer(1, 5*mm))
                 story.append(img)
                 story.append(Spacer(1, 5*mm))
                 
