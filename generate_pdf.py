@@ -1,12 +1,14 @@
 import csv
 import requests
-from io import StringIO
+from io import StringIO, BytesIO
 from reportlab.lib.pagesizes import landscape, A4, portrait
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, Frame, PageTemplate, BaseDocTemplate
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.pdfgen import canvas
+from PyPDF2 import PdfMerger, PdfReader
 import os
 import tempfile
 import re
@@ -46,52 +48,51 @@ def extract_google_drive_id(url):
             return match.group(1)
     return None
 
-def download_image_to_temp(url):
-    """Download image from Google Drive URL and save to temporary file"""
-    temp_file = None
+def download_file_from_url(url):
+    """Download file from URL and return as bytes"""
     try:
         file_id = extract_google_drive_id(url)
-        if not file_id:
-            print(f"Could not extract file ID from URL: {url}")
-            return None
-        
-        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        print(f"Downloading image from: {download_url}")
+        if file_id:
+            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        else:
+            download_url = url
+            
+        print(f"Downloading from: {download_url}")
         
         session = requests.Session()
         response = session.get(download_url, stream=True, timeout=30)
         response.raise_for_status()
         
-        # Try to get the image directly
-        content_type = response.headers.get('content-type', '')
-        if 'text/html' in content_type:
-            # If we get HTML, try the view URL
+        # Check if it's a PDF or image
+        content_type = response.headers.get('content-type', '').lower()
+        
+        # If it's HTML, try the view URL
+        if 'text/html' in content_type and file_id:
             view_url = f"https://drive.google.com/uc?export=view&id={file_id}"
             response = session.get(view_url, stream=True, timeout=30)
             response.raise_for_status()
+            content_type = response.headers.get('content-type', '').lower()
         
-        # Save to temporary file
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-        temp_file.write(response.content)
-        temp_file.close()
-        
-        # Verify the file exists and has content
-        if os.path.exists(temp_file.name) and os.path.getsize(temp_file.name) > 1000:
-            print(f"Image saved to: {temp_file.name}")
-            return temp_file.name
-        else:
-            if os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
-            return None
+        return response.content, content_type
         
     except Exception as e:
-        print(f"Error downloading image from {url}: {e}")
-        if temp_file and os.path.exists(temp_file.name):
-            try:
-                os.unlink(temp_file.name)
-            except:
-                pass
-        return None
+        print(f"Error downloading file from {url}: {e}")
+        return None, None
+
+def detect_file_type(content):
+    """Detect if content is PDF or image"""
+    # Check for PDF magic number
+    if content and content[:4] == b'%PDF':
+        return 'pdf'
+    
+    # Try to open as image
+    try:
+        PILImage.open(io.BytesIO(content))
+        return 'image'
+    except:
+        pass
+    
+    return 'unknown'
 
 def wrap_text(text, max_length=20):
     """Wrap text to fit in table cells"""
@@ -117,40 +118,8 @@ def wrap_text(text, max_length=20):
     
     return '\n'.join(lines)
 
-class MyDocTemplate(BaseDocTemplate):
-    def __init__(self, filename, **kw):
-        BaseDocTemplate.__init__(self, filename, **kw)
-        # Define page templates
-        self._first_page = True
-        
-        # Landscape frame for first page
-        landscape_frame = Frame(
-            self.leftMargin, 
-            self.bottomMargin, 
-            self.width, 
-            self.height, 
-            id='landscape'
-        )
-        
-        # Portrait frame for later pages
-        portrait_width, portrait_height = portrait(A4)
-        portrait_margin = 10*mm
-        portrait_frame = Frame(
-            portrait_margin,
-            portrait_margin,
-            portrait_width - 2*portrait_margin,
-            portrait_height - 2*portrait_margin,
-            id='portrait'
-        )
-        
-        # Create page templates
-        self.addPageTemplates([
-            PageTemplate(id='landscape_page', pagesize=landscape(A4), frames=landscape_frame),
-            PageTemplate(id='portrait_page', pagesize=portrait(A4), frames=portrait_frame),
-        ])
-
-def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
-    """Create PDF with table and images"""
+def create_table_pdf(data_rows, output_filename):
+    """Create PDF with table only (Page 1)"""
     
     # Column mapping
     cols = {
@@ -170,29 +139,11 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     ]
     
     table_data = []
-    temp_files = []  # Keep track of temporary files
-    
-    print(f"Processing {len(data_rows)} rows of data...")
     
     for idx, row in enumerate(data_rows):
         if len(row) < 15:
             continue
             
-        # Extract image URL from column 14
-        image_url = row[14].strip() if len(row) > 14 and row[14].strip() else None
-        if image_url:
-            print(f"Row {idx}: Found image URL")
-            # Download image to temp file
-            temp_file_path = download_image_to_temp(image_url)
-            if temp_file_path:
-                temp_files.append(temp_file_path)
-                print(f"Row {idx}: Image downloaded successfully")
-            else:
-                temp_files.append(None)
-                print(f"Row {idx}: Failed to download image")
-        else:
-            temp_files.append(None)
-        
         # Build table row with wrapped text
         table_row = []
         
@@ -227,10 +178,8 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         
         table_data.append(table_row)
     
-    print(f"Created {len(table_data)} table rows, {len([f for f in temp_files if f])} images downloaded")
-    
-    # Create PDF with custom document template
-    doc = MyDocTemplate(
+    # Create PDF
+    doc = SimpleDocTemplate(
         output_filename,
         pagesize=landscape(A4),
         rightMargin=5*mm,
@@ -259,7 +208,6 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         spaceAfter=8
     )
     
-    # Build story - will be split across pages
     story = []
     
     # Add title and subtitle
@@ -267,9 +215,8 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
     story.append(Spacer(1, 3*mm))
     
-    # Create table if there's data
+    # Create table
     if table_data:
-        # Calculate column widths (proportional)
         col_widths = [
             85*mm,  # Teacher Name - School Name
             22*mm,  # Enrollment
@@ -279,7 +226,6 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             40*mm   # Preference 3
         ]
         
-        # Convert table data to Paragraphs for better wrapping
         table_content = []
         for row in table_data:
             para_row = []
@@ -287,7 +233,6 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                 para_row.append(Paragraph(cell, styles['Normal']))
             table_content.append(para_row)
         
-        # Create header paragraphs
         header_paras = []
         for header in headers:
             header_paras.append(Paragraph(header, ParagraphStyle(
@@ -301,122 +246,181 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         
         table = Table([header_paras] + table_content, colWidths=col_widths, repeatRows=1)
         
-        # Style the table
         table.setStyle(TableStyle([
-            # Header row
             ('BACKGROUND', (0, 0), (-1, 0), colors.black),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, 0), 8),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
-            
-            # Data rows
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 1), (-1, -1), 7),
             ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 1), (-1, -1), 'MIDDLE'),
             ('ALIGN', (0, 1), (0, -1), 'LEFT'),
-            
-            # Grid
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('BOX', (0, 0), (-1, -1), 1, colors.black),
-            
-            # Padding
             ('TOPPADDING', (0, 0), (-1, -1), 5),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
             ('LEFTPADDING', (0, 0), (-1, -1), 3),
             ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-            
-            # Alternating row colors
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
         ]))
         
         story.append(table)
+    else:
+        story.append(Paragraph("No data available", styles['Normal']))
     
-    # === IMAGES: Each on a new page in Portrait ===
-    valid_images = [f for f in temp_files if f and os.path.exists(f)]
-    
-    if valid_images:
-        # Get portrait page dimensions
-        page_width, page_height = portrait(A4)
-        
-        for idx, temp_file_path in enumerate(valid_images):
-            # Add page break before each image
-            story.append(PageBreak())
-            
-            # Set next page to portrait
-            story.append(NextPageTemplate('portrait_page'))
-            
-            try:
-                # Get image dimensions using PIL
-                pil_img = PILImage.open(temp_file_path)
-                img_width, img_height = pil_img.size
-                pil_img.close()
-                
-                # Calculate available space for portrait page
-                available_width = page_width - 25*mm
-                available_height = page_height - 35*mm
-                
-                # Calculate scaling to fit within available space
-                width_scale = available_width / img_width
-                height_scale = available_height / img_height
-                scale = min(width_scale, height_scale)
-                
-                # Ensure image doesn't exceed page bounds
-                if scale > 1.0:
-                    scale = 1.0
-                
-                # Calculate final dimensions
-                final_width = img_width * scale
-                final_height = img_height * scale
-                
-                print(f"Image {idx+1}: Original ({img_width}x{img_height}), Scaled ({final_width:.2f}x{final_height:.2f}), Scale: {scale:.2f}")
-                
-                # Create image with calculated dimensions
-                img = Image(temp_file_path, width=final_width, height=final_height)
-                img.hAlign = 'CENTER'
-                
-                # Add image header
-                story.append(Paragraph(f"Application Image - Entry {idx + 1}", 
-                                     ParagraphStyle('ImageHeader', parent=styles['Heading2'], 
-                                                  alignment=TA_CENTER, fontSize=12, spaceAfter=8)))
-                
-                story.append(Spacer(1, 5*mm))
-                story.append(img)
-                
-                # Add caption at bottom
-                story.append(Spacer(1, 5*mm))
-                caption_style = ParagraphStyle(
-                    'ImageCaption',
-                    parent=styles['Normal'],
-                    alignment=TA_CENTER,
-                    fontSize=9,
-                    textColor=colors.grey
-                )
-                story.append(Paragraph(f"Image {idx + 1} of {len(valid_images)}", caption_style))
-                    
-            except Exception as e:
-                print(f"Error adding image {idx + 1}: {e}")
-                story.append(Paragraph(f"Error loading image: {str(e)}", styles['Normal']))
-    
-    # Build PDF
+    doc.build(story)
+    print(f"Table PDF created: {output_filename}")
+
+def image_to_pdf(image_content, output_filename):
+    """Convert image to PDF"""
     try:
+        # Open image from bytes
+        img = PILImage.open(io.BytesIO(image_content))
+        
+        # Convert to RGB if necessary
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Create PDF
+        doc = SimpleDocTemplate(
+            output_filename,
+            pagesize=portrait(A4),
+            rightMargin=10*mm,
+            leftMargin=10*mm,
+            topMargin=10*mm,
+            bottomMargin=10*mm
+        )
+        
+        story = []
+        
+        # Get image dimensions
+        img_width, img_height = img.size
+        
+        # Calculate available space
+        page_width, page_height = portrait(A4)
+        available_width = page_width - 20*mm
+        available_height = page_height - 20*mm
+        
+        # Calculate scaling
+        width_scale = available_width / img_width
+        height_scale = available_height / img_height
+        scale = min(width_scale, height_scale)
+        
+        # Create a temporary file for the image
+        temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+        img.save(temp_img.name, 'JPEG', quality=95)
+        temp_img.close()
+        
+        # Add image to PDF
+        reportlab_img = Image(temp_img.name, width=img_width*scale, height=img_height*scale)
+        reportlab_img.hAlign = 'CENTER'
+        
+        story.append(Spacer(1, 10*mm))
+        story.append(reportlab_img)
+        
         doc.build(story)
-        print(f"PDF created successfully: {output_filename}")
+        
+        # Clean up temp file
+        if os.path.exists(temp_img.name):
+            os.unlink(temp_img.name)
+            
+        print(f"Image converted to PDF: {output_filename}")
+        return True
+        
     except Exception as e:
-        print(f"Error building PDF: {e}")
-        raise
-    finally:
-        # Clean up temporary files after PDF is built
-        print("Cleaning up temporary files...")
-        for temp_file_path in temp_files:
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                    print(f"Deleted: {temp_file_path}")
-                except Exception as e:
-                    print(f"Error deleting {temp_file_path}: {e}")
+        print(f"Error converting image to PDF: {e}")
+        return False
+
+def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
+    """Create PDF with table and images"""
+    
+    # Step 1: Create table PDF (Page 1)
+    table_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    table_pdf.close()
+    create_table_pdf(data_rows, table_pdf.name)
+    
+    # Step 2: Download and convert images to PDF
+    image_pdfs = []
+    
+    for idx, row in enumerate(data_rows):
+        if len(row) < 15:
+            continue
+            
+        # Extract image URL from column 14
+        image_url = row[14].strip() if len(row) > 14 and row[14].strip() else None
+        if not image_url:
+            continue
+            
+        print(f"\nProcessing image {idx + 1}: {image_url}")
+        
+        # Download file
+        content, content_type = download_file_from_url(image_url)
+        if not content:
+            print(f"Failed to download file {idx + 1}")
+            continue
+        
+        # Detect file type
+        file_type = detect_file_type(content)
+        print(f"File type detected: {file_type}")
+        
+        if file_type == 'pdf':
+            # Save PDF directly
+            pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+            pdf_file.write(content)
+            pdf_file.close()
+            image_pdfs.append(pdf_file.name)
+            print(f"PDF saved directly: {pdf_file.name}")
+            
+        elif file_type == 'image':
+            # Convert image to PDF
+            pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+            pdf_file.close()
+            if image_to_pdf(content, pdf_file.name):
+                image_pdfs.append(pdf_file.name)
+                print(f"Image converted to PDF: {pdf_file.name}")
+        else:
+            print(f"Unsupported file type for {idx + 1}")
+    
+    # Step 3: Merge all PDFs
+    if image_pdfs:
+        merger = PdfMerger()
+        
+        # Add table PDF
+        merger.append(table_pdf.name)
+        
+        # Add image PDFs
+        for pdf_file in image_pdfs:
+            try:
+                merger.append(pdf_file)
+                print(f"Added: {pdf_file}")
+            except Exception as e:
+                print(f"Error adding {pdf_file}: {e}")
+        
+        # Save merged PDF
+        merger.write(output_filename)
+        merger.close()
+        
+        print(f"\n✅ PDF created successfully: {output_filename}")
+        print(f"Total pages: {1 + len(image_pdfs)} (1 table page + {len(image_pdfs)} image pages)")
+        
+    else:
+        # Just copy table PDF
+        import shutil
+        shutil.copy2(table_pdf.name, output_filename)
+        print(f"\n✅ PDF created successfully (table only): {output_filename}")
+    
+    # Clean up temporary files
+    try:
+        if os.path.exists(table_pdf.name):
+            os.unlink(table_pdf.name)
+        for pdf_file in image_pdfs:
+            if os.path.exists(pdf_file):
+                os.unlink(pdf_file)
+    except:
+        pass
 
 def main():
     csv_url = "https://gist.githubusercontent.com/saikat-pundit/ad6a030b5bf7d6ecaa1eaa3176526d82/raw/Rationalisation.csv"
