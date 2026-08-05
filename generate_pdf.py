@@ -2,7 +2,7 @@ import csv
 import requests
 from io import StringIO
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
@@ -310,34 +310,37 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         if table_data:
             story.append(PageBreak())
         
+        # Get page dimensions
+        page_width, page_height = landscape(A4)
+        
         for idx, temp_file_path in enumerate(valid_images):
             try:
-                # Get image dimensions
+                # Get image dimensions using PIL
                 pil_img = PILImage.open(temp_file_path)
                 img_width, img_height = pil_img.size
                 pil_img.close()
                 
-                # Add image to PDF directly from file path
-                img = Image(temp_file_path)
+                # Calculate available space (leave room for header and caption)
+                available_width = page_width - 12*mm
+                available_height = page_height - 25*mm
                 
-                # Calculate available space (minimal margins)
-                page_width = landscape(A4)[0]
-                page_height = landscape(A4)[1]
-                max_width = page_width - 12*mm  # Minimal margins
-                max_height = page_height - 20*mm  # Minimal margins for header
+                # Calculate scaling to fit within available space
+                width_scale = available_width / img_width
+                height_scale = available_height / img_height
+                scale = min(width_scale, height_scale)
                 
-                # Calculate scaling to fit page while maintaining aspect ratio
-                width_scale = max_width / img_width
-                height_scale = max_height / img_height
-                scale = min(width_scale, height_scale, 1.0)
+                # Ensure image doesn't exceed page bounds
+                if scale > 1.0:
+                    scale = 1.0
                 
-                # Ensure image is at least 70% of available space
-                if scale < 0.7:
-                    scale = 0.7
+                # Calculate final dimensions
+                final_width = img_width * scale
+                final_height = img_height * scale
                 
-                # Apply scaling
-                img.drawWidth = img_width * scale
-                img.drawHeight = img_height * scale
+                print(f"Image {idx+1}: Original ({img_width}x{img_height}), Scaled ({final_width:.2f}x{final_height:.2f}), Scale: {scale:.2f}")
+                
+                # Create image with calculated dimensions
+                img = Image(temp_file_path, width=final_width, height=final_height)
                 img.hAlign = 'CENTER'
                 
                 # Add image header
@@ -365,6 +368,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                     
             except Exception as e:
                 print(f"Error adding image {idx + 1}: {e}")
+                story.append(Paragraph(f"Error loading image: {str(e)}", styles['Normal']))
     
     # Build PDF
     try:
