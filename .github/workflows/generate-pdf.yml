@@ -76,16 +76,15 @@ jobs:
         RELEASE_TAG="application"
         echo "Checking for existing PDF in release ${RELEASE_TAG}"
         
-        # Get all assets and delete any PDF files
-        ASSETS=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name | test("\\.pdf$")) | .id')
+        # Get all asset names that are PDFs
+        ASSET_NAMES=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[].name' | grep -i "\\.pdf$" || true)
         
-        if [ -n "${ASSETS}" ]; then
+        if [ -n "${ASSET_NAMES}" ]; then
           echo "Found existing PDF assets, deleting..."
-          echo "${ASSETS}" | while read -r ASSET_ID; do
-            if [ -n "${ASSET_ID}" ]; then
-              ASSET_NAME=$(gh release view ${RELEASE_TAG} --json assets -q ".assets[] | select(.id==${ASSET_ID}) | .name")
+          echo "${ASSET_NAMES}" | while read -r ASSET_NAME; do
+            if [ -n "${ASSET_NAME}" ]; then
               echo "Deleting asset: ${ASSET_NAME}"
-              gh release delete-asset ${RELEASE_TAG} "${ASSET_NAME}" --yes 2>/dev/null || true
+              gh release delete-asset ${RELEASE_TAG} "${ASSET_NAME}" --yes || true
             fi
           done
           echo "Existing PDFs deleted"
@@ -112,7 +111,7 @@ jobs:
         gh release view ${RELEASE_TAG} --json assets -q '.assets[] | {name: .name, size: .size}'
         
         # Check if PDF is in release
-        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name | test("\\.pdf$"))' | grep -q "pdf"; then
+        if gh release view ${RELEASE_TAG} --json assets -q '.assets[].name' | grep -i "\\.pdf$" | grep -q "pdf"; then
           echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
         else
           echo "❌ PDF not found in release"
