@@ -46,8 +46,9 @@ def extract_google_drive_id(url):
             return match.group(1)
     return None
 
-def download_image_from_google_drive(url):
-    """Download image from Google Drive URL and return as PIL Image"""
+def download_image_to_temp(url):
+    """Download image from Google Drive URL and save to temporary file"""
+    temp_file = None
     try:
         file_id = extract_google_drive_id(url)
         if not file_id:
@@ -69,18 +70,27 @@ def download_image_from_google_drive(url):
             response = session.get(view_url, stream=True, timeout=30)
             response.raise_for_status()
         
-        # Convert to PIL Image
-        image_data = response.content
-        pil_image = PILImage.open(io.BytesIO(image_data))
+        # Save to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+        temp_file.write(response.content)
+        temp_file.close()
         
-        # Convert to RGB if necessary
-        if pil_image.mode != 'RGB':
-            pil_image = pil_image.convert('RGB')
-        
-        return pil_image
+        # Verify the file exists and has content
+        if os.path.exists(temp_file.name) and os.path.getsize(temp_file.name) > 1000:
+            print(f"Image saved to: {temp_file.name}")
+            return temp_file.name
+        else:
+            if os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+            return None
         
     except Exception as e:
         print(f"Error downloading image from {url}: {e}")
+        if temp_file and os.path.exists(temp_file.name):
+            try:
+                os.unlink(temp_file.name)
+            except:
+                pass
         return None
 
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
@@ -104,7 +114,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     ]
     
     table_data = []
-    image_data = []
+    temp_files = []  # Keep track of temporary files
     
     print(f"Processing {len(data_rows)} rows of data...")
     
@@ -116,16 +126,16 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         image_url = row[14].strip() if len(row) > 14 and row[14].strip() else None
         if image_url:
             print(f"Row {idx}: Found image URL")
-            # Download image now and store PIL image
-            pil_img = download_image_from_google_drive(image_url)
-            if pil_img:
-                image_data.append(pil_img)
+            # Download image to temp file
+            temp_file_path = download_image_to_temp(image_url)
+            if temp_file_path:
+                temp_files.append(temp_file_path)
                 print(f"Row {idx}: Image downloaded successfully")
             else:
-                image_data.append(None)
+                temp_files.append(None)
                 print(f"Row {idx}: Failed to download image")
         else:
-            image_data.append(None)
+            temp_files.append(None)
         
         # Build table row
         table_row = []
@@ -161,7 +171,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         
         table_data.append(table_row)
     
-    print(f"Created {len(table_data)} table rows, {len([img for img in image_data if img])} images downloaded")
+    print(f"Created {len(table_data)} table rows, {len([f for f in temp_files if f])} images downloaded")
     
     # Create PDF
     doc = SimpleDocTemplate(
@@ -251,8 +261,10 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         story.append(Paragraph("No data available", styles['Normal']))
     
     # Add images on separate pages
-    for idx, pil_img in enumerate(image_data):
-        if pil_img:
+    image_count = 0
+    for idx, temp_file_path in enumerate(temp_files):
+        if temp_file_path and os.path.exists(temp_file_path):
+            image_count += 1
             story.append(PageBreak())
             
             # Add image header
@@ -260,14 +272,9 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                                  ParagraphStyle('ImageHeader', parent=styles['Heading2'], 
                                               alignment=TA_CENTER, fontSize=12, spaceAfter=10)))
             
-            # Create temporary file for the image
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-            pil_img.save(temp_file.name, 'JPEG', quality=95)
-            temp_file.close()
-            
             try:
-                # Add image to PDF
-                img = Image(temp_file.name)
+                # Add image to PDF directly from file path
+                img = Image(temp_file_path)
                 
                 # Calculate available space
                 page_width = landscape(A4)[0]
@@ -300,18 +307,11 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                     fontSize=8,
                     textColor=colors.grey
                 )
-                story.append(Paragraph(f"Image {idx + 1} of {len([img for img in image_data if img])}", caption_style))
+                story.append(Paragraph(f"Image {image_count} of {len([f for f in temp_files if f])}", caption_style))
                 
             except Exception as e:
                 print(f"Error adding image {idx + 1}: {e}")
                 story.append(Paragraph(f"Error loading image: {str(e)}", styles['Normal']))
-            finally:
-                # Clean up temporary file
-                try:
-                    if os.path.exists(temp_file.name):
-                        os.unlink(temp_file.name)
-                except:
-                    pass
     
     # Build PDF
     try:
@@ -320,6 +320,16 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     except Exception as e:
         print(f"Error building PDF: {e}")
         raise
+    finally:
+        # Clean up temporary files after PDF is built
+        print("Cleaning up temporary files...")
+        for temp_file_path in temp_files:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                    print(f"Deleted: {temp_file_path}")
+                except Exception as e:
+                    print(f"Error deleting {temp_file_path}: {e}")
 
 def main():
     csv_url = "https://gist.githubusercontent.com/saikat-pundit/ad6a030b5bf7d6ecaa1eaa3176526d82/raw/Rationalisation.csv"
