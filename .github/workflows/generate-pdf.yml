@@ -42,7 +42,7 @@ jobs:
     - name: Verify PDF exists
       run: |
         if [ -f "Transfer Application.pdf" ]; then
-          echo "PDF file size: $(du -h Transfer Application.pdf | cut -f1)"
+          echo "PDF file size: $(du -h "Transfer Application.pdf" | cut -f1)"
           echo "PDF exists, proceeding with upload"
         else
           echo "PDF file not found!"
@@ -76,12 +76,14 @@ jobs:
         RELEASE_TAG="application"
         echo "Checking for existing PDF in release ${RELEASE_TAG}"
         
-        # Get asset ID if exists
-        ASSET_ID=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf") | .id')
+        # Get asset ID if exists (check both possible filenames)
+        ASSET_ID=$(gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf" or .name=="Transfer.Application.pdf") | .id' | head -1)
         
         if [ -n "${ASSET_ID}" ]; then
           echo "Found existing PDF with ID: ${ASSET_ID}, deleting..."
-          gh release delete-asset ${RELEASE_TAG} Transfer Application.pdf --yes
+          # Get the actual asset name
+          ASSET_NAME=$(gh release view ${RELEASE_TAG} --json assets -q ".assets[] | select(.id==${ASSET_ID}) | .name")
+          gh release delete-asset ${RELEASE_TAG} "${ASSET_NAME}" --yes
           echo "Existing PDF deleted"
         else
           echo "No existing PDF found in release"
@@ -105,8 +107,8 @@ jobs:
         echo "Release assets:"
         gh release view ${RELEASE_TAG} --json assets -q '.assets[] | {name: .name, size: .size}'
         
-        # Check if PDF is in release
-        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf")' | grep -q "Transfer Application.pdf"; then
+        # Check if PDF is in release (check both possible filenames)
+        if gh release view ${RELEASE_TAG} --json assets -q '.assets[] | select(.name=="Transfer Application.pdf" or .name=="Transfer.Application.pdf")' | grep -q "Transfer"; then
           echo "✅ PDF uploaded successfully to release ${RELEASE_TAG}"
         else
           echo "❌ PDF not found in release"
