@@ -80,12 +80,12 @@ def download_file_from_url(url):
         return None, None
 
 def detect_file_type(content):
-    """Detect if content is PDF or image"""
+    """Detect if content is PDF or image (supports PNG, JPEG, GIF, BMP, etc.)"""
     # Check for PDF magic number
     if content and content[:4] == b'%PDF':
         return 'pdf'
     
-    # Try to open as image
+    # Try to open as image (supports PNG, JPEG, GIF, BMP, WebP, etc.)
     try:
         PILImage.open(io.BytesIO(content))
         return 'image'
@@ -275,9 +275,9 @@ def create_table_pdf(data_rows, output_filename):
     print(f"Table PDF created: {output_filename}")
 
 def image_to_pdf(image_content, output_filename):
-    """Convert image to PDF"""
+    """Convert any image (PNG, JPEG, etc.) to PDF"""
     try:
-        # Open image from bytes
+        # Open image from bytes (supports PNG, JPEG, GIF, BMP, WebP, etc.)
         img = PILImage.open(io.BytesIO(image_content))
         
         # Convert to RGB if necessary
@@ -366,6 +366,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         file_type = detect_file_type(content)
         print(f"File type detected: {file_type}")
         
+        # Handle any file type (PNG, JPEG, PDF, etc.)
         if file_type == 'pdf':
             # Save PDF directly
             pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -374,15 +375,15 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
             image_pdfs.append(pdf_file.name)
             print(f"PDF saved directly: {pdf_file.name}")
             
-        elif file_type == 'image':
-            # Convert image to PDF
+        else:
+            # Convert any image (PNG, JPEG, etc.) to PDF
             pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
             pdf_file.close()
             if image_to_pdf(content, pdf_file.name):
                 image_pdfs.append(pdf_file.name)
                 print(f"Image converted to PDF: {pdf_file.name}")
-        else:
-            print(f"Unsupported file type for {idx + 1}")
+            else:
+                print(f"Failed to convert file {idx + 1}")
     
     # Step 3: Merge all PDFs
     if image_pdfs:
