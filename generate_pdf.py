@@ -2,7 +2,7 @@ import csv
 import requests
 from io import StringIO
 from reportlab.lib.pagesizes import landscape, A4, portrait
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, Frame, PageTemplate, BaseDocTemplate
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
@@ -117,13 +117,37 @@ def wrap_text(text, max_length=20):
     
     return '\n'.join(lines)
 
-def first_page(canvas, doc):
-    """First page - Landscape"""
-    canvas.setPageSize(landscape(A4))
-
-def later_pages(canvas, doc):
-    """Later pages - Portrait"""
-    canvas.setPageSize(portrait(A4))
+class MyDocTemplate(BaseDocTemplate):
+    def __init__(self, filename, **kw):
+        BaseDocTemplate.__init__(self, filename, **kw)
+        # Define page templates
+        self._first_page = True
+        
+        # Landscape frame for first page
+        landscape_frame = Frame(
+            self.leftMargin, 
+            self.bottomMargin, 
+            self.width, 
+            self.height, 
+            id='landscape'
+        )
+        
+        # Portrait frame for later pages
+        portrait_width, portrait_height = portrait(A4)
+        portrait_margin = 10*mm
+        portrait_frame = Frame(
+            portrait_margin,
+            portrait_margin,
+            portrait_width - 2*portrait_margin,
+            portrait_height - 2*portrait_margin,
+            id='portrait'
+        )
+        
+        # Create page templates
+        self.addPageTemplates([
+            PageTemplate(id='landscape_page', pagesize=landscape(A4), frames=landscape_frame),
+            PageTemplate(id='portrait_page', pagesize=portrait(A4), frames=portrait_frame),
+        ])
 
 def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     """Create PDF with table and images"""
@@ -205,8 +229,8 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     
     print(f"Created {len(table_data)} table rows, {len([f for f in temp_files if f])} images downloaded")
     
-    # Create PDF with landscape for first page
-    doc = SimpleDocTemplate(
+    # Create PDF with custom document template
+    doc = MyDocTemplate(
         output_filename,
         pagesize=landscape(A4),
         rightMargin=5*mm,
@@ -235,10 +259,9 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         spaceAfter=8
     )
     
-    # Build story
+    # Build story - will be split across pages
     story = []
     
-    # === PAGE 1: Table in Landscape ===
     # Add title and subtitle
     story.append(Paragraph("Rationalization of Teachers | Intra-circle Transfer", title_style))
     story.append(Paragraph("Transfer Application Receiving Status", subtitle_style))
@@ -319,8 +342,11 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
         page_width, page_height = portrait(A4)
         
         for idx, temp_file_path in enumerate(valid_images):
-            # Add page break before each image (after first page)
+            # Add page break before each image
             story.append(PageBreak())
+            
+            # Set next page to portrait
+            story.append(NextPageTemplate('portrait_page'))
             
             try:
                 # Get image dimensions using PIL
@@ -328,9 +354,9 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
                 img_width, img_height = pil_img.size
                 pil_img.close()
                 
-                # Calculate available space (leave room for header and caption)
-                available_width = page_width - 20*mm
-                available_height = page_height - 30*mm
+                # Calculate available space for portrait page
+                available_width = page_width - 25*mm
+                available_height = page_height - 35*mm
                 
                 # Calculate scaling to fit within available space
                 width_scale = available_width / img_width
@@ -376,8 +402,7 @@ def create_pdf(data_rows, output_filename="Transfer Application.pdf"):
     
     # Build PDF
     try:
-        # Build the PDF with the first page in landscape and rest in portrait
-        doc.build(story, onFirstPage=first_page, onLaterPages=later_pages)
+        doc.build(story)
         print(f"PDF created successfully: {output_filename}")
     except Exception as e:
         print(f"Error building PDF: {e}")
